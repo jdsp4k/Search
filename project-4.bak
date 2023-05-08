@@ -1,0 +1,105 @@
+#lang racket
+(require racket/port)
+(require data/maybe)
+
+; Open the file as a single long string
+(define (file-to-string f)
+  (port->string (open-input-file f #:mode 'text)))
+
+; Remove any special characters and replace them with spaces
+(define (normalize-string string [chars '("." "?" "!" "," ";" ":" "\"" "-" "*" "[" "]" "#" "@" "<" ">" "\t" "\n" ")" "(")] [rep " "])
+  (if (empty? chars)
+      string
+      (normalize-string (string-replace string (first chars) rep) (rest chars))))
+
+; Uppercase the string and split it on spaces into words
+(define (get-normalized-text f)
+  (string-split (string-upcase (normalize-string (file-to-string f)))))
+
+; Takes a sorted list of strings and turns them into a hash table with the word as a key and freqency as value
+(define (list-to-hash in-lst [out-tbl '()])
+  (if (empty? in-lst)
+      out-tbl
+      (if (empty? out-tbl)
+          (list-to-hash (rest in-lst) (append out-tbl (list (cons (first in-lst) 1))))
+          (if (string=? (first in-lst) (car (last out-tbl)))
+              (list-to-hash (rest in-lst) (append (reverse (cdr (reverse out-tbl))) (list (cons (first in-lst) (+ (cdr (last out-tbl)) 1)))))
+              (list-to-hash (rest in-lst) (append out-tbl (list (cons (first in-lst) 1))))))))
+
+; Turn the values in the hash tables from freqency into their inverse logs
+(define (create-table f)
+  (hash-count-to-inv-log (list-to-hash (sort (get-normalized-text f) string<?)) (length (get-normalized-text f))))
+
+; Actual log function
+(define (count-to-inv-log count total)
+  (* (log (/ count total) 10) -1))
+
+; Recursively apply this to each value in the table
+(define (hash-count-to-inv-log hash total [out '()])
+  (if (empty? hash)
+      out
+      (hash-count-to-inv-log (rest hash) total (append out (list (cons (car (first hash)) (count-to-inv-log (cdr (first hash)) total)))))))
+
+; Compare function for the filter
+(define (cmp-key f-hash s-hash)
+  (string=? (car (first f-hash)) (car s-hash)))
+
+; compare the tables
+(define (compare-tables f-tbl s-tbl [sim 0] [count 0])
+  (if (empty? f-tbl)
+      (/ sim count)
+      (if (empty? (filter (λ (ent) (cmp-key f-tbl ent)) s-tbl))
+          (compare-tables (rest f-tbl) s-tbl sim count)
+          (compare-tables (rest f-tbl) s-tbl (+ sim (abs (- (cdr (first f-tbl)) (cdr (first (filter (λ (ent) (cmp-key f-tbl ent)) s-tbl)))))) (+ count 1)))))
+
+(define (rec-filter table w-list)
+  (if (empty? w-list)
+      table
+      (rec-filter (filter (λ (w) (not (string=? (first w-list) w)))) (rest w-list))))
+
+(define (filter-table filename filter-list)
+  (cons filename (create-table filename) filter-list))
+
+(define (open-files list-files filter-list [out '()])
+  (if (empty? list-files)
+      out
+      (open-files (rest list-files) filter-list (append out (filter-table (first list-files) filter-list)))))
+
+(define (get-files dir filter-list)
+  (open-files (open-input-file dir) filter-list))
+
+(define (get-stop-words dir filter-list-path)
+  (get-files dir (get-normalized-text filter-list-path)))
+
+(define (train dir filter-file-path [out-port-path '"table.b"])
+  (define out (open-output-file out-port-path))
+  (write (get-stop-words dir filter-file-path))
+  (close-output-port out))
+
+; Main Program
+; First let these functions (important because they're very expensive and we only want to run them once)
+; then do the comparison and print them pretty-like
+(let ([doyle (create-table "Input_Files\\Doyle.txt")]
+      [lovecraft (create-table "Input_Files\\Lovecraft.txt")]
+      [anon-1 (create-table "Input_Files\\mystery1.txt")]
+      [anon-2 (create-table "Input_Files\\mystery2.txt")])
+      (let ([anon-1-doyle (compare-tables doyle anon-1)]
+            [anon-1-lovec (compare-tables lovecraft anon-1)]
+            [anon-2-doyle (compare-tables doyle anon-2)]
+            [anon-2-lovec (compare-tables lovecraft anon-2)])
+        (display "mystery1.txt:\n")
+        (display "Doyle: ")
+        (display anon-1-doyle)
+        (display "\nLovecraft: ")
+        (display anon-1-lovec)
+        (if (> anon-1-doyle anon-1-lovec)
+            (display "\nProbably Lovecraft\n")
+            (display "\nProbably Doyle\n"))
+        (display "\nmystery2.txt:\n")
+        (display "Doyle: ")
+        (display anon-2-doyle)
+        (display "\nLovecraft: ")
+        (display anon-2-lovec)
+        (if (> anon-2-doyle anon-2-lovec)
+            (display "\nProbably Lovecraft\n")
+            (display "\nProbably Doyle\n"))))
